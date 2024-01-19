@@ -20,17 +20,23 @@ This is a comprehensive set of instructions that assumes basic familiarity with 
 
 Firstly, install all Python libraries listed in the `requirements.txt` file. You would also need to download the spacy model used in the NER heuristic for our [metadata-pruning method](https://github.com/defog-ai/sql-eval/blob/main/utils/pruning.py). Also, you would need to clone the repository where we store our database data and schema and install the library.
 
+* Install libraries
+
 ```bash
 git clone https://github.com/thomassuedbroecker/sql-eval-ts.git
 cd sql-eval-ts
-python3.11 -m env-3.11
+python3.11 -m venv env-3.11
 source ./env-3.11/bin/activate
 python3 -m pip install -r requirements.txt
 python3 -m spacy download en_core_web_sm
+```
+
+* Install data dependencies
+
+```
 cd ..
 mkdir sql-eval-ts-dependencies
 cd sql-eval-ts-dependencies
-
 git clone https://github.com/thomassuedbroecker/defog-data-ts.git
 cd defog-data-ts
 python3 -m pip install -e .
@@ -43,25 +49,21 @@ Next, you would need to set up the databases that the queries are executed on. W
 Once you have Docker installed, you can create the Docker container and start the Postgres database using the following commands. We recommend mounting a volume on `data/postgres` to persist the data, as well as `data/export` to make it easier to import the data. To create the container, run:
 
 ```bash
-mkdir data/postgres data/export
-podman create --name postgres-sql-eval -e POSTGRES_PASSWORD=postgres -p 5432:5432 -v $(pwd)/data/postgres:/var/lib/postgresql/data -v $(pwd)/data/export:/export postgres:14-alpine
-```
-
-To start the container, run:
-```bash
-docker start postgres-sql-eval
+cd ../..
+cd sql-eval-ts/containers
+sh start_database.sh
 ```
 
 If you want to reset the Postgres server instance's state (e.g. memory leaks from transient connections), you can turn it off (and start it back up after):
 ```bash
-docker stop postgres-sql-eval
+podman stop postgres-sql-eval
 # see that the container is still there:
-docker container list -a
+podman container list -a
 ```
 
 Some notes:
 - You would need to stop other Postgres instances listening on port 5432 before running the above command.
-- You only need to run the `docker create ...` once to create the image, and then subsequently only `docker start/stop postgres-sql-eval`. 
+- You only need to run the `podman create ...` once to create the image, and then subsequently only `podman start/stop postgres-sql-eval`. 
 - The data is persisted in `data/postgres`, so turning it off isn't critical. On the other hand, if you delete the `data/postgres` folder, then all is lost T.T
 - While we will use Docker for deploying Postgres and the initialization, you are free to modify the scripts/instructions to work with your local installation.
 
@@ -72,7 +74,8 @@ The data for importing is in the `defog-data` repository which we cloned earlier
 
 ```bash
 # set the following environment variables
-cd defog-data # if you're not already in the defog-data directory
+cd ..
+cd sql-eval-ts-dependencies/defog-data-ts # if you're not already in the defog-data directory
 export DBPASSWORD="postgres"
 export DBUSER="postgres"
 export DBHOST="localhost"
