@@ -18,13 +18,16 @@ This is a comprehensive set of instructions that assumes basic familiarity with 
 
 ### Install Dependencies
 
-Firstly, install all Python libraries listed in the `requirements.txt` file. You would also need to download the spacy model used in the NER heuristic for our [metadata-pruning method](https://github.com/defog-ai/sql-eval/blob/main/utils/pruning.py). Also, you would need to clone the repository where we store our database data and schema, and install the library.
+Firstly, install all Python libraries listed in the `requirements.txt` file. You would also need to download the spacy model used in the NER heuristic for our [metadata-pruning method](https://github.com/defog-ai/sql-eval/blob/main/utils/pruning.py). Also, you would need to clone the repository where we store our database data and schema and install the library.
+
 ```bash
-pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-git clone https://github.com/defog-ai/defog-data.git
-cd defog-data
-pip install -e .
+python3.11 -m env-3.11
+source ./env-3.11/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m spacy download en_core_web_sm
+git clone https://github.com/thomassuedbroecker/defog-data-ts.git
+cd defog-data-ts
+python3 -m pip install -e .
 ```
 
 ### Start Postgres Instance
