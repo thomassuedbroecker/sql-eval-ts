@@ -71,10 +71,11 @@ Some notes:
 
 The data for importing is in the `defog-data` repository which we cloned earlier. Each folder contains the metadata and data corresponding to a single database (e.g. `academic` contains all the data required to reload the 'academic' database). We assume that you have a `psql` client installed locally. We will create a new database in our postgres instance for each of the 7 SQL databases with the following commands:
 
+Create a new terminal and navigate to the newly cloned repository.
+
 ```bash
 # set the following environment variables
-cd ..
-cd sql-eval-ts-dependencies/defog-data-ts # if you're not already in the defog-data directory
+cd ./defog-data-ts # if you're not already in the defog-data directory
 export DBPASSWORD="postgres"
 export DBUSER="postgres"
 export DBHOST="localhost"
