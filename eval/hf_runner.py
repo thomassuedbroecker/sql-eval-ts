@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Optional
+
 from eval.eval import compare_query_results
 import pandas as pd
 import torch
@@ -12,31 +13,44 @@ from transformers import (
 )
 from utils.pruning import prune_metadata_str
 from utils.questions import prepare_questions_df
-from utils.creds import db_creds_all, bq_project
+from utils.creds import db_creds_all
 from tqdm import tqdm
 from psycopg2.extensions import QueryCanceledError
 from time import time
 import gc
 from peft import PeftModel, PeftConfig
+from utils.reporting import upload_results
 
 device_map = "mps" if torch.backends.mps.is_available() else "auto"
 
 
 def generate_prompt(
-    prompt_file, question, db_name, instructions="", k_shot_prompt="", public_data=True
+    prompt_file,
+    question,
+    db_name,
+    instructions="",
+    k_shot_prompt="",
+    glossary="",
+    table_metadata_string="",
+    public_data=True,
 ):
     with open(prompt_file, "r") as f:
         prompt = f.read()
     question_instructions = question + " " + instructions
 
-    pruned_metadata_str = prune_metadata_str(
-        question_instructions, db_name, public_data
-    )
+    if table_metadata_string == "":
+        pruned_metadata_str = prune_metadata_str(
+            question_instructions, db_name, public_data
+        )
+    else:
+        pruned_metadata_str = table_metadata_string
+
     prompt = prompt.format(
         user_question=question,
         instructions=instructions,
         table_metadata_string=pruned_metadata_str,
         k_shot_prompt=k_shot_prompt,
+        glossary=glossary,
     )
     return prompt
 
@@ -141,7 +155,14 @@ def run_hf_eval(args):
     for prompt_file, output_file in zip(prompt_file_list, output_file_list):
         # create a prompt for each question
         df["prompt"] = df[
-            ["question", "db_name", "instructions", "k_shot_prompt"]
+            [
+                "question",
+                "db_name",
+                "instructions",
+                "k_shot_prompt",
+                "glossary",
+                "table_metadata_string",
+            ]
         ].apply(
             lambda row: generate_prompt(
                 prompt_file,
@@ -149,6 +170,8 @@ def run_hf_eval(args):
                 row["db_name"],
                 row["instructions"],
                 row["k_shot_prompt"],
+                row["glossary"],
+                row["table_metadata_string"],
                 public_data,
             ),
             axis=1,
@@ -239,22 +262,15 @@ def run_hf_eval(args):
             os.makedirs(output_dir)
         output_df.to_csv(output_file, index=False, float_format="%.2f")
 
-        # save to BQ
-        if args.bq_table is not None:
-            run_name = output_file.split("/")[-1].split(".")[0]
-            output_df["run_name"] = run_name
-            output_df["run_time"] = pd.Timestamp.now()
-            output_df["run_params"] = json.dumps(vars(args))
-            print(f"Saving to BQ table {args.bq_table} with run_name {run_name}")
-            try:
-                if bq_project is not None and bq_project != "":
-                    output_df.to_gbq(
-                        destination_table=args.bq_table,
-                        project_id=bq_project,
-                        if_exists="append",
-                        progress_bar=False,
-                    )
-                else:
-                    print("No BQ project id specified, skipping save to BQ")
-            except Exception as e:
-                print(f"Error saving to BQ: {e}")
+        results = output_df.to_dict("records")
+        # upload results
+        with open(prompt_file, "r") as f:
+            prompt = f.read()
+        if args.upload_url is not None:
+            upload_results(
+                results=results,
+                url=args.upload_url,
+                runner_type="hf_runner",
+                prompt=prompt,
+                args=args,
+            )

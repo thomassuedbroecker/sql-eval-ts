@@ -1,7 +1,6 @@
 accelerate
 anthropic
 argparse
-defog-data==0.1.1
 func_timeout
 openai>=1.1.0
 pandas
@@ -18,4 +17,5 @@ tiktoken
 torch
 tqdm
 transformers
+sqlparse
 vllm; sys_platform != 'darwin'

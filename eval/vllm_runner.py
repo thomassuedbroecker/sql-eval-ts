@@ -6,28 +6,41 @@ from eval.eval import compare_query_results
 import pandas as pd
 from utils.pruning import prune_metadata_str
 from utils.questions import prepare_questions_df
-from utils.creds import db_creds_all, bq_project
+from utils.creds import db_creds_all
 import time
 import torch
 from transformers import AutoTokenizer
 from tqdm import tqdm
+from utils.reporting import upload_results
 
 
 def generate_prompt(
-    prompt_file, question, db_name, instructions="", k_shot_prompt="", public_data=True
+    prompt_file,
+    question,
+    db_name,
+    instructions="",
+    k_shot_prompt="",
+    glossary="",
+    table_metadata_string="",
+    public_data=True,
 ):
     with open(prompt_file, "r") as f:
         prompt = f.read()
     question_instructions = question + " " + instructions
 
-    pruned_metadata_str = prune_metadata_str(
-        question_instructions, db_name, public_data
-    )
+    if table_metadata_string == "":
+        pruned_metadata_str = prune_metadata_str(
+            question_instructions, db_name, public_data
+        )
+    else:
+        pruned_metadata_str = table_metadata_string
+
     prompt = prompt.format(
         user_question=question,
         instructions=instructions,
         table_metadata_string=pruned_metadata_str,
         k_shot_prompt=k_shot_prompt,
+        glossary=glossary,
     )
     return prompt
 
@@ -47,7 +60,14 @@ def run_vllm_eval(args):
     # initialize model only once as it takes a while
     print(f"Preparing {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    llm = LLM(model=model_name, tensor_parallel_size=torch.cuda.device_count())
+    if not args.quantized:
+        llm = LLM(model=model_name, tensor_parallel_size=torch.cuda.device_count())
+    else:
+        llm = LLM(
+            model=model_name,
+            tensor_parallel_size=torch.cuda.device_count(),
+            quantization="AWQ",
+        )
 
     sampling_params = SamplingParams(
         n=1,
@@ -68,7 +88,14 @@ def run_vllm_eval(args):
         print(f"Using prompt file {prompt_file}")
         # create a prompt for each question
         df["prompt"] = df[
-            ["question", "db_name", "instructions", "k_shot_prompt"]
+            [
+                "question",
+                "db_name",
+                "instructions",
+                "k_shot_prompt",
+                "glossary",
+                "table_metadata_string",
+            ]
         ].apply(
             lambda row: generate_prompt(
                 prompt_file,
@@ -76,6 +103,8 @@ def run_vllm_eval(args):
                 row["db_name"],
                 row["instructions"],
                 row["k_shot_prompt"],
+                row["glossary"],
+                row["table_metadata_string"],
                 public_data,
             ),
             axis=1,
@@ -100,7 +129,9 @@ def run_vllm_eval(args):
         total_correct = 0
         with tqdm(total=len(df)) as pbar:
             for i, output in enumerate(outputs):
-                generated_query = output.outputs[0].text.split(";")[0].strip()
+                generated_query = (
+                    output.outputs[0].text.split(";")[0].split("```")[0].strip()
+                )
                 normalized_query = sqlparse.format(
                     generated_query, keyword_case="upper", strip_whitespace=True
                 )
@@ -148,22 +179,15 @@ def run_vllm_eval(args):
         df.to_csv(output_file, index=False, float_format="%.2f")
         print(f"Saved results to {output_file}")
 
-        # save to BQ
-        if args.bq_table is not None:
-            run_name = output_file.split("/")[-1].split(".")[0]
-            df["run_name"] = run_name
-            df["run_time"] = pd.Timestamp.now()
-            df["run_params"] = json.dumps(vars(args))
-            print(f"Saving to BQ table {args.bq_table} with run_name {run_name}")
-            try:
-                if bq_project is not None and bq_project != "":
-                    df.to_gbq(
-                        destination_table=args.bq_table,
-                        project_id=bq_project,
-                        if_exists="append",
-                        progress_bar=False,
-                    )
-                else:
-                    print("No BQ project id specified, skipping save to BQ")
-            except Exception as e:
-                print(f"Error saving to BQ: {e}")
+        results = df.to_dict("records")
+        # upload results
+        with open(prompt_file, "r") as f:
+            prompt = f.read()
+        if args.upload_url is not None:
+            upload_results(
+                results=results,
+                url=args.upload_url,
+                runner_type="vllm_runner",
+                prompt=prompt,
+                args=args,
+            )

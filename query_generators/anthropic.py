@@ -73,7 +73,12 @@ class AnthropicQueryGenerator(QueryGenerator):
         return num_tokens
 
     def generate_query(
-        self, question: str, instructions: str, k_shot_prompt: str
+        self,
+        question: str,
+        instructions: str,
+        k_shot_prompt: str,
+        glossary: str,
+        table_metadata_string: str,
     ) -> dict:
         start_time = time.time()
         self.err = ""
@@ -86,13 +91,18 @@ class AnthropicQueryGenerator(QueryGenerator):
             if "Human:" not in model_prompt:
                 raise ValueError("Invalid prompt file. Please use prompt_anthropic.md")
         question_instructions = question + " " + instructions
+        if table_metadata_string == "":
+            pruned_metadata_str = prune_metadata_str(
+                question_instructions, self.db_name, self.use_public_data
+            )
+        else:
+            pruned_metadata_str = table_metadata_string
         prompt = model_prompt.format(
             user_question=question,
-            table_metadata_string=prune_metadata_str(
-                question_instructions, self.db_name, self.use_public_data
-            ),
+            table_metadata_string=pruned_metadata_str,
             instructions=instructions,
             k_shot_prompt=k_shot_prompt,
+            glossary=glossary,
         )
         function_to_run = self.get_completion
         package = prompt

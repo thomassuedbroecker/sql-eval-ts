@@ -6,14 +6,13 @@ from func_timeout import func_timeout
 import pandas as pd
 from pandas.testing import assert_frame_equal, assert_series_equal
 from sqlalchemy import create_engine
-import snowflake.connector
 from utils.creds import db_creds_all
 
 LIKE_PATTERN = r"LIKE[\s\S]*'"
 
 
 def normalize_table(
-    df: pd.DataFrame, query_category: str, question: str
+    df: pd.DataFrame, query_category: str, question: str, sql: str = None
 ) -> pd.DataFrame:
     """
     Normalizes a dataframe by:
@@ -25,7 +24,7 @@ def normalize_table(
     # remove duplicate rows, if any
     df = df.drop_duplicates()
 
-    # sort columns in alphabetical order
+    # sort columns in alphabetical order of column names
     sorted_df = df.reindex(sorted(df.columns), axis=1)
 
     # check if query_category is 'order_by' and if question asks for ordering
@@ -34,9 +33,59 @@ def normalize_table(
     in_question = re.search(pattern, question.lower())  # true if contains
     if query_category == "order_by" or in_question:
         has_order_by = True
+
+        if sql:
+            # determine which columns are in the ORDER BY clause of the sql generated, using regex
+            pattern = re.compile(r"ORDER BY[\s\S]*", re.IGNORECASE)
+            order_by_clause = re.search(pattern, sql)
+            if order_by_clause:
+                order_by_clause = order_by_clause.group(0)
+                # get all columns in the ORDER BY clause, by looking at the text between ORDER BY and the next semicolon, comma, or parantheses
+                pattern = re.compile(r"(?<=ORDER BY)(.*?)(?=;|,|\)|$)", re.IGNORECASE)
+                order_by_columns = re.findall(pattern, order_by_clause)
+                order_by_columns = (
+                    order_by_columns[0].split() if order_by_columns else []
+                )
+                order_by_columns = [
+                    col.strip().rsplit(".", 1)[-1] for col in order_by_columns
+                ]
+
+                ascending = False
+                # if there is a DESC or ASC in the ORDER BY clause, set the ascending to that
+                if "DESC" in [i.upper() for i in order_by_columns]:
+                    ascending = False
+                elif "ASC" in [i.upper() for i in order_by_columns]:
+                    ascending = True
+
+                # remove whitespace, commas, and parantheses
+                order_by_columns = [col.strip() for col in order_by_columns]
+                order_by_columns = [
+                    col.replace(",", "").replace("(", "") for col in order_by_columns
+                ]
+                order_by_columns = [
+                    i
+                    for i in order_by_columns
+                    if i.lower()
+                    not in ["desc", "asc", "nulls", "last", "first", "limit"]
+                ]
+
+                # get all columns in sorted_df that are not in order_by_columns
+                other_columns = [
+                    i for i in sorted_df.columns.tolist() if i not in order_by_columns
+                ]
+
+                # only choose order_by_columns that are in sorted_df
+                order_by_columns = [
+                    i for i in order_by_columns if i in sorted_df.columns.tolist()
+                ]
+                sorted_df = sorted_df.sort_values(
+                    by=order_by_columns + other_columns, ascending=ascending
+                )
+
     if not has_order_by:
         # sort rows using values from first column to last
         sorted_df = sorted_df.sort_values(by=list(sorted_df.columns))
+
     # reset index
     sorted_df = sorted_df.reset_index(drop=True)
     return sorted_df
@@ -147,6 +196,8 @@ def query_snowflake_db(
     timeout: time in seconds to wait for query to finish before timing out
     """
 
+    import snowflake.connector
+
     if db_creds is None:
         db_creds = db_creds_all["snowflake"]
 
@@ -172,19 +223,25 @@ def query_snowflake_db(
 
 
 def compare_df(
-    df1: pd.DataFrame, df2: pd.DataFrame, query_category: str, question: str
+    df_gold: pd.DataFrame,
+    df_gen: pd.DataFrame,
+    query_category: str,
+    question: str,
+    query_gold: str = None,
+    query_gen: str = None,
 ) -> bool:
     """
     Compares two dataframes and returns True if they are the same, else False.
+    query_gold and query_gen are the original queries that generated the respective dataframes.
     """
     # drop duplicates to ensure equivalence
-    if df1.shape == df2.shape and (df1.values == df2.values).all():
+    if df_gold.shape == df_gen.shape and (df_gold.values == df_gen.values).all():
         return True
 
-    df1 = normalize_table(df1, query_category, question)
-    df2 = normalize_table(df2, query_category, question)
+    df_gold = normalize_table(df_gold, query_category, question, query_gold)
+    df_gen = normalize_table(df_gen, query_category, question, query_gen)
 
-    if df1.shape == df2.shape and (df1.values == df2.values).all():
+    if df_gold.shape == df_gen.shape and (df_gold.values == df_gen.values).all():
         return True
     else:
         return False
@@ -195,6 +252,8 @@ def subset_df(
     df_super: pd.DataFrame,
     query_category: str,
     question: str,
+    query_super: str = None,
+    query_sub: str = None,
     verbose: bool = False,
 ) -> bool:
     """
@@ -228,13 +287,15 @@ def subset_df(
             if verbose:
                 print(f"no match for {col_sub_name}")
             return False
-    df_sub_normalized = normalize_table(df_sub, query_category, question)
+    df_sub_normalized = normalize_table(df_sub, query_category, question, query_sub)
 
     # get matched columns from df_super, and rename them with columns from df_sub, then normalize
     df_super_matched = df_super[matched_columns].rename(
         columns=dict(zip(matched_columns, df_sub.columns))
     )
-    df_super_matched = normalize_table(df_super_matched, query_category, question)
+    df_super_matched = normalize_table(
+        df_super_matched, query_category, question, query_super
+    )
 
     try:
         assert_frame_equal(df_sub_normalized, df_super_matched, check_dtype=False)
@@ -278,7 +339,9 @@ def compare_query_results(
             raise ValueError(
                 f"Invalid db_type: {db_type}. Only postgres and snowflake are supported."
             )
-        if compare_df(results_gold, results_gen, query_category, question):
+        if compare_df(
+            results_gold, results_gen, query_category, question, query_gold, query_gen
+        ):
             return (True, True)
         elif subset_df(results_gold, results_gen, query_category, question):
             correct = True

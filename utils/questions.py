@@ -55,5 +55,23 @@ def prepare_questions_df(
                 lambda x: f"\nAdhere closely to the following correct examples as references for answering the question:\n{x}"
             )
 
+    # get glossary if applicable
+    if "glossary" in question_query_df.columns:
+        question_query_df["glossary"] = question_query_df["glossary"].fillna("")
+        question_query_df["glossary"] = question_query_df["glossary"].apply(
+            lambda x: f"\nUse the following instructions if and only if they are relevant to the question:\n{x}\n"
+        )
+    else:
+        question_query_df["glossary"] = ""
+
     question_query_df.reset_index(inplace=True, drop=True)
+
+    # get table_metadata_string if applicable
+    if "table_metadata_string" in question_query_df.columns:
+        question_query_df["table_metadata_string"] = question_query_df[
+            "table_metadata_string"
+        ].fillna("")
+    else:
+        question_query_df["table_metadata_string"] = ""
+
     return question_query_df
