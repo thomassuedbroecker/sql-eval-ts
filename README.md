@@ -31,12 +31,9 @@ python3 -m pip install -r requirements.txt
 python3 -m spacy download en_core_web_sm
 ```
 
-* Install data dependencies
+* Install data dependencies in the same directory as the repository above.
 
 ```
-cd ..
-mkdir sql-eval-ts-dependencies
-cd sql-eval-ts-dependencies
 git clone https://github.com/thomassuedbroecker/defog-data-ts.git
 cd defog-data-ts
 python3 -m pip install -e .
@@ -51,6 +48,8 @@ Once you have Docker installed, you can create the Docker container and start th
 ```bash
 cd ../..
 cd sql-eval-ts/containers
+podman volume create data
+podman volume create export
 sh start_database.sh
 ```
 
