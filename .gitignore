@@ -13,3 +13,7 @@ results_fn_postgres/*.json
 .pytest_cache
 
 .vscode
+
+#Additional
+/env-3.11
+.DS_Store
